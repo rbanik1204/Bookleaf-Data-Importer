@@ -108,7 +108,7 @@ async function importBooks() {
       continue
     }
 
-    const bubbleAuthorId = authorMap.get(book.author_id)
+    const bubbleAuthorId = authorMap.get(author_id)
 
     if (!bubbleAuthorId) {
       throw new Error(
