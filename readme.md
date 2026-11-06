@@ -366,3 +366,398 @@ The third challenge establishes an automated integration between Bubble.io and n
 It demonstrates the use of webhook-based communication, backend workflow orchestration, request validation, idempotency-oriented request tracking, AI integration, structured API responses, and persistent notification logging.
 
 The result is a functional workflow that connects an administrator's action to AI-generated author royalty summaries while maintaining request-level traceability.
+
+# Challenge 4: End-to-End Workflow Documentation and Integration Debugging
+
+## 1. Overview
+
+This challenge involved documenting the complete royalty-summary generation workflow implemented using Bubble.io, n8n, and an AI language model.
+
+The objective was to allow an administrator to trigger a personalised royalty summary for an individual author, generate the content using AI, return the result to Bubble, and display and record the generated summary in the application.
+
+The implementation required careful coordination between Bubble's database and workflow engine, n8n's webhook-based automation, request validation, duplicate-request protection, AI generation, and response handling.
+
+An additional four hours of debugging were required to resolve issues involving request IDs, API Connector initialisation, duplicate replay, and payload validation.
+
+## 2. Technology Stack
+
+| Component            | Responsibility                                  |
+| -------------------- | ----------------------------------------------- |
+| Bubble.io            | User interface, database, application workflows |
+| n8n                  | Workflow orchestration and automation           |
+| Webhook              | Receives requests from Bubble                   |
+| OpenAI Chat Model    | Generates personalised royalty summaries        |
+| n8n Data Table       | Tracks requests and supports idempotency        |
+| Bubble API Connector | Connects Bubble workflows with n8n              |
+
+## 3. Overall Architecture
+
+The integration follows this sequence:
+
+1. An administrator opens an author's details page.
+2. The administrator clicks **Generate & Send Royalty Summary**.
+3. Bubble creates a NotificationLog record with a unique request ID.
+4. Bubble collects the author's information and associated book records.
+5. Bubble sends the payload to the n8n production webhook.
+6. n8n authenticates and validates the incoming request.
+7. n8n checks whether the request has already been processed.
+8. Valid new requests proceed to AI generation.
+9. The AI generates a personalised royalty summary.
+10. n8n returns the generated content through the webhook response.
+11. Bubble updates the corresponding NotificationLog record.
+12. Bubble displays the generated summary on the author details page.
+
+## 4. Bubble.io Workflow Implementation
+
+### 4.1 Administrator action
+
+A button named **Generate & Send Royalty Summary** was implemented on the administrator's author details page.
+
+The workflow uses the current page's Author data rather than fixed author information.
+
+The button workflow contains the following steps.
+
+### Step 1: Create a NotificationLog record
+
+A new NotificationLog record is created before sending the request.
+
+The following fields are populated:
+
+- Author: Current page's Author
+- Status: `processing`
+- Triggered At: Current date/time
+- Request ID: Dynamically generated using Bubble's RandomString calculation
+
+The request ID uniquely identifies the individual generation request.
+
+### Step 2: Call the n8n API
+
+Bubble invokes the API Connector action named:
+
+`BookLeaf n8n Integration - Generate Royalty Summary`
+
+The request includes:
+
+- Author ID
+- Author name
+- Email
+- Phone number
+- City
+- Joining date
+- Associated books in JSON format
+- Request ID generated in Step 1
+
+The request ID is mapped dynamically:
+
+`Result of Step 1 (Create a new NotificationLog)'s request_id`
+
+The books are retrieved using the current page's Author as the search constraint, ensuring that only the selected author's books are included.
+
+### Step 3: Update NotificationLog on success
+
+When the API response indicates success, Bubble updates the NotificationLog record created in Step 1.
+
+The fields include:
+
+- Generated Content: Result of Step 2's generated summary
+- Request ID: Result of Step 2's request ID
+- Status: `success`
+
+The action runs only when the API response's `success` value is yes.
+
+### Step 4: Handle API errors
+
+A separate workflow action handles API errors when the API Connector returns an error.
+
+The record is updated with:
+
+- Status: `failed`
+- Error Message: Result of Step 2's returned error
+
+This prevents an unsuccessful API request from being recorded as a successful generation.
+
+### Step 5: Display the generated summary
+
+A custom state named `generated_summary` was implemented on the Royalty Summary group.
+
+The state is populated from the generated content saved in the NotificationLog record.
+
+The summary is displayed dynamically rather than using hardcoded author-specific content.
+
+## 5. n8n Workflow Implementation
+
+The n8n workflow is named:
+
+`BookLeaf Royalty Notification`
+
+It handles authentication, validation, idempotency, AI generation, and webhook responses.
+
+### 5.1 Webhook
+
+The workflow begins with a POST Webhook node.
+
+It receives the request from Bubble through the production webhook URL.
+
+Header authentication is enabled using a shared secret configured in Bubble's API Connector.
+
+### 5.2 Validate Request
+
+The Validate Request node checks the incoming payload.
+
+It validates the required author information, book data, and request ID.
+
+Invalid requests are routed to the invalid-request response instead of proceeding to AI generation.
+
+### 5.3 Payload validation
+
+The Is Payload Valid? condition separates valid and invalid requests.
+
+Invalid requests receive an HTTP 400 response with an appropriate error code and message.
+
+### 5.4 Idempotency and duplicate protection
+
+A request-tracking mechanism was implemented using an n8n Data Table named:
+
+`bookleaf_royalty_requests`
+
+The workflow checks whether a request ID already exists.
+
+The request is evaluated against its current state:
+
+- New or retry: The workflow proceeds with processing.
+- Already completed: The previously generated response is returned through duplicate replay.
+- In progress: The workflow returns an in-progress response.
+
+This prevents the same request from generating duplicate AI summaries.
+
+### 5.5 Claim Request
+
+A new request is claimed in the tracking table before AI generation.
+
+This helps prevent concurrent duplicate processing.
+
+### 5.6 Prepare AI Input
+
+The Prepare AI Input node structures the incoming data into a clean format.
+
+It prepares:
+
+- Author information
+- Books JSON array
+- Book count
+- Request ID
+
+The AI node receives structured data instead of relying on hardcoded author details.
+
+### 5.7 AI Summary Generation
+
+The Basic LLM Chain uses an OpenAI Chat Model to generate the royalty summary.
+
+The prompt instructs the model to produce a personalised communication containing:
+
+- Personalised greeting
+- Individual book details
+- Sales and royalty figures
+- Total earned royalties
+- Total paid royalties
+- Pending royalties
+- Quarterly payout information
+- The applicable 45-day processing window
+- Publication and distribution information
+- A professional closing
+
+The model is instructed to use the supplied data and avoid unsupported payment-date promises.
+
+### 5.8 AI output validation
+
+The Is AI Output Usable? condition checks whether the generated text is a valid string and contains at least 200 characters.
+
+The workflow separates usable AI output from empty or insufficient responses.
+
+### 5.9 Response handling
+
+The workflow contains dedicated response paths.
+
+| Scenario                    | Response                        |
+| --------------------------- | ------------------------------- |
+| Successful AI generation    | HTTP 200 with generated summary |
+| Invalid payload             | HTTP 400                        |
+| AI generation failure       | HTTP 502                        |
+| Empty AI output             | HTTP 502                        |
+| Duplicate completed request | Previously generated response   |
+| Request already processing  | In-progress response            |
+
+The success response contains:
+
+- `success`
+- `author_id`
+- `author_name`
+- `generated_summary`
+
+### 5.10 Record Outcome
+
+The Record Outcome node saves the processing result in the n8n Data Table.
+
+It records information such as:
+
+- Request ID
+- Processing status
+- Error code
+- Generated summary
+- Completion timestamp
+- Execution ID
+
+This provides an internal record of workflow execution.
+
+## 6. Four Hours of Debugging: Problems and Resolutions
+
+The most challenging part of this implementation was ensuring that each author received their own generated summary instead of a previously generated response.
+
+### Issue 1: Incorrect author summary displayed
+
+**Problem:**
+
+When generating a royalty summary for another author, the application continued displaying Priya Sharma's previously generated summary.
+
+**Investigation:**
+
+The n8n execution history showed that the workflow was returning a duplicate replay response.
+
+The request ID was being reused, causing the idempotency mechanism to return the previously stored result.
+
+**Resolution:**
+
+The Bubble workflow was inspected to verify that the request ID was generated dynamically and passed from Step 1 to Step 2.
+
+The API Connector initialization sample was also identified as a separate source of confusion because its sample request ID could appear in initialization responses.
+
+### Issue 2: API Connector initialization failure
+
+**Problem:**
+
+Reinitializing the Bubble API Connector with an empty request ID returned an HTTP 400 error.
+
+The n8n validation response indicated that the request ID was required and had to satisfy the configured length and character restrictions.
+
+**Resolution:**
+
+A valid initialization value was supplied:
+
+`init-request-12345678`
+
+The API Connector then initialized successfully.
+
+This initialization value was used only as sample data and was not intended to become the runtime request ID.
+
+### Issue 3: Random request ID and duplicate replay
+
+**Problem:**
+
+The workflow continued receiving the initialization request ID instead of a fresh runtime value.
+
+The investigation revealed that the RandomString calculation and its character settings needed correction.
+
+**Resolution:**
+
+The RandomString calculation in Bubble was configured with:
+
+- Length: 32 characters
+- Use letters: Enabled
+- Use lowercase letters: Enabled
+- Use numbers: Enabled
+- Use special characters: Disabled
+
+The special-character setting was particularly important because n8n's validation accepted only letters, digits, underscores, and hyphens.
+
+### Issue 4: n8n rejected the generated request ID
+
+**Problem:**
+
+A generated request ID looked like:
+
+`XxTCY!#}oAoSB945+Q3o4~#XJ1ZT!xLy`
+
+Although it was sufficiently long, n8n rejected it with:
+
+`INVALID_PAYLOAD: request_id must be 8-128 characters (letters, digits, _ or -).`
+
+**Root cause:**
+
+Bubble's RandomString calculation was generating special characters that were not permitted by the n8n validation logic.
+
+**Resolution:**
+
+Special characters were disabled in the RandomString calculation.
+
+A new request ID was generated using only permitted characters.
+
+The next execution successfully passed payload validation and proceeded through AI generation.
+
+### Issue 5: Callback failure on Bubble Free plan
+
+**Problem:**
+
+An additional n8n HTTP Request callback was initially implemented to update Bubble's NotificationLog directly.
+
+The callback failed with HTTP 401 and the message:
+
+`This application does not expose an API. Please upgrade your Bubble subscription for your API calls to run.`
+
+**Resolution:**
+
+The callback was removed from the n8n workflow.
+
+The implementation was simplified to use the webhook response already received by Bubble's API Connector.
+
+Bubble now updates the NotificationLog using the result of its own API Connector action.
+
+This avoided depending on an additional incoming Bubble Workflow API call that was unavailable under the current plan.
+
+## 7. Security and Reliability
+
+The implementation includes several safeguards:
+
+- Header authentication for incoming n8n webhook requests.
+- Payload validation before AI generation.
+- Request ID validation.
+- Duplicate-request protection through an n8n Data Table.
+- Separate handling for invalid requests, AI failures, and empty AI output.
+- Tracking of completed and failed processing outcomes.
+- Bubble-side NotificationLog updates based on API results.
+
+The callback endpoint was removed because it was not compatible with the current Bubble plan. The final implementation relies on Bubble initiating the request and processing the returned response.
+
+## 8. Final Testing and Verification
+
+The integration was tested using multiple author records.
+
+The final successful test confirmed that:
+
+1. The selected author's information was sent from Bubble.
+2. A unique request ID was generated dynamically.
+3. The request passed n8n validation.
+4. Duplicate protection did not incorrectly replay another author's result.
+5. The AI generated a personalised royalty summary using the supplied author's data.
+6. n8n returned the generated content through the webhook.
+7. Bubble received and displayed the generated summary.
+8. The NotificationLog success workflow could update the corresponding record.
+
+A particularly important final test involved Vikram Joshi (AUTH004).
+
+The initial request was rejected because the generated request ID contained unsupported special characters. After disabling special characters in Bubble's RandomString calculation, the request passed validation and the summary generation worked successfully.
+
+## 9. Final Outcome
+
+The individual royalty-summary generation workflow was successfully implemented and tested.
+
+The final architecture uses Bubble as the application and database layer, n8n as the automation and orchestration layer, and an OpenAI language model for personalised royalty-summary generation.
+
+The debugging process also reinforced the importance of:
+
+- Dynamic runtime values versus API initialization samples.
+- Consistent request ID generation and validation.
+- Idempotency and duplicate-request handling.
+- Inspecting actual execution data instead of relying only on UI behaviour.
+- Designing integrations around the limitations of the selected platform plan.
+
+**Key lesson:** A successful integration requires more than connecting two APIs. Data identity, validation rules, request lifecycle, error handling, and response mapping must all work together reliably.
