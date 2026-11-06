@@ -162,3 +162,207 @@ The remaining testing limitation is the Bubble Free-plan workflow execution allo
 With sufficient workflow execution capacity, the intended sequence can complete, including updating each notification record to `success` or recording an appropriate failure.
 
 **Integrity note:** A notification is not considered successful merely because its initial log record was created. Its final status should reflect the result of the API execution.
+
+# Challenge 3: AI-Powered Royalty Summary Generation & Notification Workflow
+
+## Overview
+
+This challenge implements an automated royalty summary generation system for the BookLeaf Author Royalty Dashboard using **Bubble.io, n8n, and Google Gemini**.
+
+The system allows an administrator to trigger a royalty summary for an individual author. Bubble sends the author's information and associated book-level royalty data to an n8n webhook. The workflow validates the request, processes the data using an AI model, generates a personalised royalty summary, and returns the result to Bubble.
+
+Bubble then stores the generated summary and updates the corresponding Notification Log entry.
+
+## Technology Stack
+
+- **Bubble.io** – Application frontend, database, backend workflows, and API integration.
+- **n8n** – Workflow automation and request orchestration.
+- **Google Gemini** – AI-powered royalty summary generation.
+- **Bubble API Connector** – Communication between Bubble and n8n.
+- **Webhook Authentication** – Secures incoming requests using a shared secret.
+
+## System Architecture
+
+```text
+Admin Dashboard
+      |
+      v
+Generate Royalty Summary Button
+      |
+      v
+Bubble Backend Workflow
+      |
+      +--> Step 1: Create Notification Log
+      |       - Associate Author
+      |       - Generate unique request_id
+      |       - Set status to processing
+      |
+      v
+Step 2: Call n8n Webhook
+      |
+      v
+n8n Workflow
+      |
+      +--> Validate Request
+      |
+      +--> Check Duplicate Request
+      |
+      +--> Prepare AI Input
+      |
+      +--> Generate Summary using Gemini
+      |
+      +--> Validate AI Output
+      |
+      +--> Return JSON Response
+      |
+      v
+Bubble Receives API Response
+      |
+      v
+Step 3: Update Notification Log
+      - Save generated summary
+      - Save request_id
+      - Update status to success
+```
+
+## Workflow Implementation
+
+### 1. Bubble: Notification Log Creation
+
+When an administrator clicks the Generate & Send Royalty Summary button, Bubble creates a new NotificationLog record.
+
+The record contains:
+
+- Author reference
+- Unique request ID
+- Trigger timestamp
+- Initial status: `processing`
+
+A unique request ID is generated using Bubble's RandomString expression.
+
+### 2. Bubble: n8n API Integration
+
+Bubble invokes the configured API Connector action and sends:
+
+- Author ID
+- Author name
+- Email address
+- Phone number
+- City
+- Joining date
+- Complete book-level royalty data
+- Request ID
+
+The books are dynamically retrieved using a search constrained to the current author.
+
+The request ID is passed from Step 1 into Step 2 to maintain consistency across the workflow.
+
+### 3. n8n: Request Validation
+
+The incoming webhook request is validated before AI processing.
+
+Validation includes checking:
+
+- Request body structure
+- Author object
+- Required author information
+- Book data structure
+- Request ID format
+
+Invalid requests are rejected with an appropriate error response.
+
+### 4. Duplicate Request Protection
+
+The workflow uses the request ID to identify duplicate requests and prevent repeated processing.
+
+It also includes request-tracking logic to handle duplicate and in-progress requests.
+
+### 5. AI-Powered Summary Generation
+
+After validation, the workflow prepares the author and book data for the AI model.
+
+Google Gemini generates a professional, personalised royalty summary.
+
+The generated content includes:
+
+- Personalised author greeting
+- Individual book sales and royalty figures
+- Total royalty earned
+- Total royalty paid
+- Total pending royalty
+- Explanation of the quarterly payout cycle
+- Applicable 45-day payout processing window
+- Relevant publication and production updates
+
+The AI is instructed to use the supplied data and avoid inventing figures or dates.
+
+### 6. Response Handling
+
+After successful generation, n8n returns a structured JSON response containing:
+
+- `success`
+- `author_id`
+- `author_name`
+- `generated_summary`
+
+The response is consumed by Bubble through the API Connector.
+
+### 7. Bubble: Notification Log Update
+
+Bubble uses the result of Step 1 as the record to update.
+
+The generated summary and request ID are populated using the result of Step 2. The status is changed from `processing` to `success` only when the API response indicates successful generation.
+
+This maintains a consistent relationship between the original request and its final result.
+
+## Request ID and Data Consistency
+
+A unique request ID connects all three Bubble workflow steps.
+
+| Workflow Step                   | Request ID                        |
+| ------------------------------- | --------------------------------- |
+| Step 1 – Create NotificationLog | Generate a unique RandomString    |
+| Step 2 – Call n8n               | Pass Step 1's request ID          |
+| Step 3 – Update NotificationLog | Save Step 2's returned request ID |
+
+This approach ensures that the same request identifier is used throughout the complete operation.
+
+**Important implementation detail:** The API Connector's `request_id` parameter must not be configured to allow blank values. Allowing blank values caused Bubble to send an empty request ID, which was rejected by n8n validation. This was resolved by generating the ID in Step 1 and passing it through the subsequent steps.
+
+## Error Handling and Reliability
+
+The workflow includes:
+
+- Webhook authentication
+- Request validation
+- Duplicate request protection
+- AI output validation
+- Invalid request responses
+- Error response handling
+- Request tracking
+- Notification Log status management
+
+The NotificationLog data type provides a record of each generation request and its processing status.
+
+## Testing and Verification
+
+The following implementation checks were completed:
+
+- Successful API Connector initialization.
+- Dynamic author information passed from Bubble.
+- Complete book data passed to n8n.
+- Request ID generated in Bubble.
+- Request ID successfully passed between all three Bubble workflow steps.
+- n8n request validation.
+- AI summary generation.
+- Structured JSON response returned to Bubble.
+- Generated summary saved in the corresponding NotificationLog.
+- Successful workflow execution from the administrator's author details page.
+
+## Outcome
+
+The third challenge establishes an automated integration between Bubble.io and n8n for AI-powered royalty summary generation.
+
+It demonstrates the use of webhook-based communication, backend workflow orchestration, request validation, idempotency-oriented request tracking, AI integration, structured API responses, and persistent notification logging.
+
+The result is a functional workflow that connects an administrator's action to AI-generated author royalty summaries while maintaining request-level traceability.
