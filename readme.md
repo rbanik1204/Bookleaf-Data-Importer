@@ -1,49 +1,374 @@
-## Known Limitations & Testing Constraints
+# BookLeaf — Author Royalty Dashboard & Automated Notification System
 
-### 1. Bubble Free-Plan Workflow Execution Limit
+## 1. Project Overview
 
-The application was developed and tested using Bubble's Free plan. During end-to-end testing, Bubble reached the workflow execution limit imposed by the free tier.
+The BookLeaf Author Royalty Dashboard is a web application designed to help authors monitor their book sales and royalty earnings while enabling administrators to generate personalized, AI-powered royalty summaries.
 
-**Impact:**
+The application is built using **Bubble.io** as the frontend, database and application platform, with **n8n** handling workflow automation and AI integration.
 
-- The workflow successfully creates a `NotificationLog` record with the initial status set to `processing`.
-- The subsequent API Connector action, which sends the author's royalty data to the n8n webhook, may not execute once the plan's workflow limit has been reached.
-- Consequently, the final workflow step that updates the notification record with the generated summary and changes its status to `success` cannot complete in those cases.
-- Such records may remain in the `processing` state, with their generated content and error message fields empty.
+The system provides two primary interfaces:
 
-### 2. n8n Integration Verification
+- **Author Portal:** Authors can securely view their books, royalty figures, payout status and consolidated earnings.
+- **Admin Portal:** Administrators can manage author-level visibility, inspect royalty information, filter records and trigger individual or bulk AI-generated royalty summaries.
 
-The n8n automation was independently tested using production webhook executions.
+## 2. Technology Stack
 
-The following functionality was successfully verified:
+| Component                 | Technology                           |
+| ------------------------- | ------------------------------------ |
+| Application platform      | Bubble.io                            |
+| Database                  | Bubble Database                      |
+| Workflow automation       | n8n Cloud                            |
+| AI integration            | OpenAI Chat Model                    |
+| AI model                  | GPT-5-mini                           |
+| API communication         | HTTP Webhooks / Bubble API Connector |
+| Authentication            | Bubble email/password authentication |
+| Workflow request tracking | n8n Data Tables                      |
 
-- Receiving author details and book-level royalty data from Bubble.
-- Processing multiple books belonging to an author.
-- Generating personalised royalty summaries using an AI language model.
-- Calculating consolidated royalty figures, including total earned, paid, and pending royalties.
-- Returning a structured JSON response containing the author ID, author name, success status, and generated summary.
+## 3. System Architecture
 
-### 3. Bulk Notification Testing
+The application follows a workflow-driven architecture.
 
-The bulk notification workflow and Notification Log interface were implemented in Bubble.
+1. Users authenticate through Bubble.
+2. Bubble identifies the user's role and provides the appropriate dashboard.
+3. Authors access only their associated books and royalty information.
+4. Administrators can access all author records and trigger royalty summaries.
+5. Bubble sends the author's information, book records and a unique request ID to an authenticated n8n webhook.
+6. n8n validates the request and prepares structured input for the AI model.
+7. The AI generates a personalized royalty summary.
+8. n8n returns the generated summary to Bubble.
+9. Bubble updates the corresponding NotificationLog record.
 
-However, complete end-to-end bulk execution could not be consistently verified after the Free-plan workflow execution limit was reached. Therefore, some notification records may remain in `processing` rather than reaching their final status.
+The full author and book payload is sent from Bubble to n8n. This approach avoids an additional Bubble Data API fetch during each summary-generation request.
 
-### 4. Resolution
+## 4. Bubble Database Design
 
-The limitation is associated with the Bubble plan's workflow execution allowance rather than the n8n summary-generation logic.
+The database is organized around separate data types with explicit relationships.
 
-With sufficient Bubble workflow execution capacity, the complete sequence can run:
+### 4.1 Author
 
-1. Create a notification log.
-2. Send author and book data to the n8n webhook.
-3. Receive the generated royalty summary.
-4. Update the notification log with the generated content and `success` status.
-5. Record failures where applicable.
+Stores author profile information.
 
-**Note:** No notification is marked as successful unless the corresponding API action returns a successful response.
+| Field       | Purpose                  |
+| ----------- | ------------------------ |
+| author_id   | Unique author identifier |
+| name        | Author's full name       |
+| email       | Author's email           |
+| phone       | Contact number           |
+| city        | Author's city            |
+| joined_date | Registration date        |
+| user        | Associated Bubble User   |
 
-### 2. HTTP 422 – JSON Serialization and API Payload Debugging
+### 4.2 Book
+
+Stores book information and royalty metrics.
+
+| Field                    | Purpose                            |
+| ------------------------ | ---------------------------------- |
+| book_id                  | Unique book identifier             |
+| title                    | Book title                         |
+| isbn                     | ISBN                               |
+| genre                    | Book category                      |
+| publication_date         | Publication date                   |
+| status                   | Publication or production status   |
+| mrp                      | Maximum retail price               |
+| author_royalty_per_copy  | Royalty per copy                   |
+| total_copies_sold        | Total copies sold                  |
+| total_royalty_earned     | Total royalty earned               |
+| royalty_paid             | Royalty already paid               |
+| royalty_pending          | Outstanding royalty                |
+| last_royalty_payout_date | Most recent payout date            |
+| print_partner            | Printing partner                   |
+| available_on             | Distribution platforms             |
+| author                   | Reference to the associated Author |
+| author_id                | Author identifier                  |
+
+The `author` field establishes the relationship between books and authors. This makes it possible to retrieve an author's books through a relational reference instead of relying only on text identifiers.
+
+### 4.3 NotificationLog
+
+Stores the history of royalty-summary generation requests.
+
+| Field             | Purpose                           |
+| ----------------- | --------------------------------- |
+| author            | Associated Author                 |
+| request_id        | Unique request identifier         |
+| status            | Notification processing status    |
+| triggered_at      | Request timestamp                 |
+| generated_content | AI-generated summary              |
+| error_message     | Error information, when available |
+
+### 4.4 User
+
+Bubble's built-in User data type is extended with:
+
+- `role`: Identifies an administrator or author.
+- `author_profile`: Reference to the associated Author record.
+
+This allows the application to associate authentication identities with author profiles.
+
+### Database rationale
+
+The database separates user authentication, author profiles, book records and notification history. This avoids mixing operational information into a single data type and supports independent privacy rules and queries.
+
+The supplied dataset was imported into Bubble, containing 10 author records and 18 book records.
+
+## 5. Authentication and Privacy
+
+Bubble email/password authentication is used for user login.
+
+After authentication, the application checks the user's role and redirects them to the appropriate dashboard.
+
+Privacy rules are configured at the database level:
+
+- Administrators can access all author, book and notification records.
+- Authors can access their own Author record.
+- Authors can access only books associated with their author profile.
+- Notification logs are restricted to administrators.
+
+Page-level role checks provide an additional access-control layer.
+
+Database privacy rules are used alongside page-level restrictions so that access control does not depend only on navigation.
+
+## 6. Author Portal
+
+The author dashboard provides a consolidated view of an author's royalty information.
+
+### Features
+
+- Displays the author's associated books.
+- Shows book title, ISBN, genre, publication status, publication date, MRP and platform availability.
+- Displays copies sold, royalty earned, royalty paid and royalty pending for each book.
+- Calculates consolidated earned, paid and pending royalty totals.
+- Displays visual royalty-status indicators.
+
+### Royalty status logic
+
+Three visual states are used:
+
+- **Green — Fully Paid:** No outstanding royalty remains.
+- **Yellow — Pending:** An outstanding royalty exists but is within the normal payout cycle.
+- **Red — Overdue:** An outstanding royalty exists and the last payout is older than 90 days, or no payout has been made for a published book older than 90 days.
+
+These indicators help authors understand their payout position without manually interpreting individual dates and figures.
+
+## 7. Admin Portal
+
+The admin dashboard provides an overview of all authors and their royalty information.
+
+### Author overview
+
+Administrators can view:
+
+- Author name and city.
+- Total number of books.
+- Total royalty earned.
+- Total pending royalty.
+
+The dashboard supports:
+
+- Author-name search.
+- City filtering.
+- Payout-status filtering.
+
+### Author detail view
+
+Selecting an author opens a detailed view containing their profile, associated books and royalty figures.
+
+The application displays the available royalty information from the supplied dataset.
+
+**Dataset limitation:** Individual payout transaction records were not supplied in the dataset. Therefore, the application displays the available last-payout information rather than fabricating a transaction-level payout history.
+
+### Individual royalty summary
+
+The administrator can trigger the **Generate & Send Royalty Summary** action from an author's detail page.
+
+### Bulk royalty summary
+
+The admin dashboard also provides a bulk trigger that invokes the same n8n webhook for eligible authors with pending royalties.
+
+### Notification log
+
+The NotificationLog data type records summary-generation requests, including the author, request ID, timestamp, generated content and processing status.
+
+## 8. Bubble–n8n Integration
+
+Bubble communicates with n8n through an authenticated HTTP webhook.
+
+### Request payload
+
+The webhook receives structured information containing:
+
+- Author ID.
+- Author name.
+- Email address.
+- Phone number.
+- City.
+- Joining date.
+- Book records and their royalty information.
+- Unique request ID.
+
+### Workflow sequence
+
+1. **Webhook:** Receives the POST request from Bubble.
+2. **Validate Request:** Checks the incoming payload and required fields.
+3. **Request ID validation:** Checks the request identifier.
+4. **Idempotency checks:** Uses the n8n Data Table to track request processing and prevent duplicate processing.
+5. **Prepare AI Input:** Structures the author and book information for the language model.
+6. **Basic LLM Chain:** Sends the prepared information to the OpenAI Chat Model.
+7. **AI Output Validation:** Checks whether the generated summary is a usable text response.
+8. **Response:** Returns the generated summary and author information to Bubble.
+
+The integration uses the full payload approach instead of fetching the same records again through the Bubble Data API.
+
+## 9. AI Prompt Strategy
+
+The AI model is instructed to generate a professional, personalized royalty-summary email using the supplied author and book information.
+
+The prompt emphasizes factual accuracy and prohibits inventing missing information.
+
+### Expected summary structure
+
+1. Personalized greeting using the author's name.
+2. Individual summaries of published books.
+3. Copies sold and royalty figures for each book.
+4. Consolidated earned, paid and pending amounts.
+5. Explanation of the quarterly payout cycle and 45-day payout window where applicable.
+6. A positive acknowledgment when all royalties are paid.
+7. Production updates for books that are not yet published.
+8. A warm and professional closing.
+
+### Accuracy instructions
+
+The prompt instructs the model to:
+
+- Use only the supplied data.
+- Avoid inventing payout dates or contact details.
+- Distinguish overdue royalty from normal pending royalty.
+- Reconcile total earned, paid and pending figures.
+- Avoid presenting production-stage books as published books.
+- Clearly explain missing or unavailable information.
+
+The output is returned as human-readable text and stored in Bubble's NotificationLog.
+
+## 10. Security and Reliability
+
+### Webhook authentication
+
+The n8n webhook uses Header Authentication with a shared secret. Bubble sends the corresponding authentication header when making the request.
+
+This prevents the webhook from being treated as an unrestricted public endpoint.
+
+### Request validation
+
+The workflow validates incoming data before processing it. Invalid payloads and missing or malformed request identifiers are rejected.
+
+### Idempotency
+
+A unique request ID is generated for each request.
+
+The n8n Data Table tracks request IDs and their processing outcomes. This helps prevent duplicate processing and provides a record of request execution.
+
+### AI output validation
+
+The generated response is checked to ensure it is a sufficiently long text response before being treated as usable output.
+
+### Error handling and limitations
+
+The workflow includes validation and error-handling branches for invalid requests and unusable AI output.
+
+Bubble also evaluates the webhook response before updating the corresponding notification record.
+
+The successful summary-generation and NotificationLog update path has been tested. The failed-generation status-update path was not fully verified during final testing and is therefore not represented as a confirmed end-to-end capability.
+
+## 11. Testing and Verification
+
+The following application features were implemented and tested:
+
+| Feature                             | Verification       |
+| ----------------------------------- | ------------------ |
+| Author login                        | Tested             |
+| Admin login                         | Tested             |
+| Role-based dashboard routing        | Configured         |
+| Author-specific book visibility     | Tested             |
+| Admin author overview               | Tested             |
+| Author-name search                  | Tested             |
+| City filtering                      | Tested             |
+| Payout-status filtering             | Tested             |
+| Author detail view                  | Tested             |
+| Green/yellow/red royalty indicators | Tested             |
+| Individual summary generation       | Tested             |
+| Bulk summary generation             | Tested             |
+| AI-generated summary content        | Tested             |
+| NotificationLog success update      | Tested             |
+| Webhook authentication              | Configured         |
+| Request validation                  | Implemented        |
+| Idempotency tracking                | Implemented        |
+| Failed-generation status update     | Not fully verified |
+
+## 12. Challenges and Learning Outcomes
+
+This assignment involved learning and implementing a technology stack that was initially unfamiliar.
+
+### Bubble.io
+
+Working with Bubble required understanding its visual programming model, database relationships, repeating groups, dynamic expressions, workflows, privacy rules and API Connector.
+
+A key learning experience was implementing database-level access restrictions alongside role-based page navigation.
+
+### n8n
+
+The automation workflow required understanding webhook execution, node connections, data transformation, conditional branching, AI model integration and request tracking.
+
+Debugging payload serialization and webhook responses helped develop a better understanding of how data moves between independent platforms.
+
+### AI integration
+
+Designing the AI prompt required balancing readability with factual accuracy. The prompt was refined to account for overdue royalties, pending payments, production-stage books and numerical reconciliation.
+
+### Integration
+
+Connecting Bubble and n8n required careful handling of JSON payloads, request identifiers, authentication headers and API responses.
+
+The project strengthened practical understanding of low-code platforms, workflow automation and AI-powered application integration.
+
+## 13. Setup and Access Information
+
+### Bubble application
+
+- Application name: BookLeaf Royalty Dashboard
+- Live application URL: [ADD LIVE URL]
+- Admin test account: [ADD ADMIN EMAIL]
+- Admin password: [SHARE SECURELY]
+- Author test account: [ADD AUTHOR EMAIL]
+- Author password: [SHARE SECURELY]
+
+### n8n
+
+- Workflow name: BookLeaf Royalty Notification
+- Workspace URL: [ADD N8N WORKSPACE URL]
+- Workflow export: `BookLeaf_Royalty_Notification.json`
+
+### Configuration notes
+
+The application requires the configured Bubble application, n8n workflow, webhook authentication header and AI model credentials.
+
+Credentials and shared secrets must be supplied through secure configuration and should not be committed to exported documentation or source files.
+
+## 14. Conclusion
+
+The BookLeaf Author Royalty Dashboard demonstrates an integrated application built with Bubble.io, n8n and AI.
+
+It provides authors with visibility into their royalty information, gives administrators tools to inspect author records and trigger royalty summaries, and uses an automated workflow to generate personalized AI content.
+
+The project provided practical experience in visual application development, database design, privacy configuration, workflow automation, API integration and prompt engineering.
+
+**Project:** Author Royalty Dashboard & Automated Notification System  
+**Platform:** Bubble.io + n8n + OpenAI  
+**Purpose:** Author royalty visibility and AI-powered royalty summary generation
+
+## Known Testing Constraints
+
+### 1. HTTP 422 – JSON Serialization and API Payload Debugging
 
 During the initial Bubble-to-n8n integration, the API request returned an HTTP 422 error with the following parsing message:
 
@@ -761,3 +1086,5 @@ The debugging process also reinforced the importance of:
 - Designing integrations around the limitations of the selected platform plan.
 
 **Key lesson:** A successful integration requires more than connecting two APIs. Data identity, validation rules, request lifecycle, error handling, and response mapping must all work together reliably.
+{{ typeof $json.text === "string" && $json.text.trim().length >= 200 }}
+{{ typeof $json.text === "string" && $json.text.trim().length >= 200 }}
